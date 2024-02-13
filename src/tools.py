@@ -111,6 +111,9 @@ def get_only_in_img_mask(pts, H, W):
 
 
 def get_rot(h):
+    # 旋转矩阵
+    #  | cos(θ) sin(θ)|
+    #  |-sin(θ) cos(θ)|
     return torch.Tensor([
         [np.cos(h), np.sin(h)],
         [-np.sin(h), np.cos(h)],
@@ -125,22 +128,43 @@ def img_transform(img, post_rot, post_tran,
     img = img.crop(crop)
     if flip:
         img = img.transpose(method=Image.FLIP_LEFT_RIGHT)
+    
+    # rotate 角度 90° 45°
     img = img.rotate(rotate)
 
     # post-homography transformation
+    # 单位矩阵 
+    # | 1 0 | 
+    # | 0 1 |  *  0.21148668003737284
     post_rot *= resize
+
+    # 为什么是 负xy
+    # | -x  -y |
     post_tran -= torch.Tensor(crop[:2])
     if flip:
+        # 翻转矩阵
         A = torch.Tensor([[-1, 0], [0, 1]])
         b = torch.Tensor([crop[2] - crop[0], 0])
         post_rot = A.matmul(post_rot)
         post_tran = A.matmul(post_tran) + b
+    # rotate/180*np.pi 转换成弧度
+    # A 二维旋转矩阵
     A = get_rot(rotate/180*np.pi)
+    # b 缩放 后矩阵的中心位置
     b = torch.Tensor([crop[2] - crop[0], crop[3] - crop[1]]) / 2
+
+    # A (x - b) + b
+    # Ax + A(-b) + b
     b = A.matmul(-b) + b
-    post_rot = A.matmul(post_rot)
+
+    # 仿射变换
+    # 旋转矩阵 * 缩放矩阵
+    post_rot = A.matmul(post_rot) 
     post_tran = A.matmul(post_tran) + b
 
+    # img       : resize crop之后的图形
+    # post_rot  : 放射变换矩阵
+    # post_tran : 
     return img, post_rot, post_tran
 
 

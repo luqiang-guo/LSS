@@ -29,6 +29,8 @@ class Up(nn.Module):
         )
 
     def forward(self, x1, x2):
+        # x1 上采样  + x2
+        # conv
         x1 = self.up(x1)
         x1 = torch.cat([x2, x1], dim=1)
         return self.conv(x1)
@@ -41,49 +43,73 @@ class CamEncode(nn.Module):
         self.C = C
 
         self.trunk = EfficientNet.from_pretrained("efficientnet-b0")
+        print(self.trunk)
 
         self.up1 = Up(320+112, 512)
+
+        # 没有输出DxC维度的特征，通过两个向量外积的方式得到一个矩阵
+        # 很像是特征值特征向量
         self.depthnet = nn.Conv2d(512, self.D + self.C, kernel_size=1, padding=0)
 
     def get_depth_dist(self, x, eps=1e-20):
         return x.softmax(dim=1)
 
     def get_depth_feat(self, x):
+        # 提取efficient net 提取特征
         x = self.get_eff_depth(x)
         # Depth
+        # 得到D+C的特征
         x = self.depthnet(x)
 
         depth = self.get_depth_dist(x[:, :self.D])
+        # 矩阵的外积得到特征矩阵
         new_x = depth.unsqueeze(1) * x[:, self.D:(self.D + self.C)].unsqueeze(2)
 
+        '''
+        个人感悟：
+        这里原本可以直接通过nn学出来一个输出的特征矩阵,
+        感觉这里学出来的是矩阵谱分解后的一层，不知道这样子做的目的？
+        '''
         return depth, new_x
 
     def get_eff_depth(self, x):
+        '''
+        使用efficient net 提取输入x的特征
+        通过UP 进行多尺度融合最终得到输出的特征
+        '''
+
+        # 下面的链接不知道缘由：
         # adapted from https://github.com/lukemelas/EfficientNet-PyTorch/blob/master/efficientnet_pytorch/model.py#L231
         endpoints = dict()
 
+        # 为了获取中间特征，人为的展开efficient
         # Stem
         x = self.trunk._swish(self.trunk._bn0(self.trunk._conv_stem(x)))
         prev_x = x
 
+        print('________________________________________________________')
+        print("x size -> ", x.size())
         # Blocks
         for idx, block in enumerate(self.trunk._blocks):
             drop_connect_rate = self.trunk._global_params.drop_connect_rate
             if drop_connect_rate:
                 drop_connect_rate *= float(idx) / len(self.trunk._blocks) # scale drop connect_rate
             x = block(x, drop_connect_rate=drop_connect_rate)
+            print("x size -> ", x.size())
             if prev_x.size(2) > x.size(2):
+                print('eff block', prev_x.size(), x.size())
                 endpoints['reduction_{}'.format(len(endpoints)+1)] = prev_x
             prev_x = x
 
         # Head
         endpoints['reduction_{}'.format(len(endpoints)+1)] = x
+        # 多尺度特征融合
         x = self.up1(endpoints['reduction_5'], endpoints['reduction_4'])
         return x
 
     def forward(self, x):
         depth, x = self.get_depth_feat(x)
-
+        
         return x
 
 
@@ -168,6 +194,16 @@ class LiftSplatShoot(nn.Module):
         of the points in the point cloud.
         Returns B x N x D x H/downsample x W/downsample x 3
         """
+
+        '''
+        mini nuScen
+        rots        [4, 5, 3, 3]
+        trans       [4, 5, 3]
+        intrins     [4, 5, 3, 3]
+        post_rots   [4, 5, 3, 3]
+        post_trans  [4, 5, 3]
+        '''
+
         B, N, _ = trans.shape
 
         # undo post-transformation
@@ -188,12 +224,26 @@ class LiftSplatShoot(nn.Module):
     def get_cam_feats(self, x):
         """Return B x N x D x H/downsample x W/downsample x C
         """
+        '''
+        x            shape ->  [4, 5, 3, 128, 352]
+        return       shape ->  [4, 5, 41, 8, 22, 64]
+        '''
+
         B, N, C, imH, imW = x.shape
 
+        # pytorch 只能处理4维 所以要view下
         x = x.view(B*N, C, imH, imW)
+        # out x shape :  [20, 3, 128, 352]
+
         x = self.camencode(x)
+        # out x shape :  [20, 64, 41, 8, 22]
+
         x = x.view(B, N, self.camC, self.D, imH//self.downsample, imW//self.downsample)
+        # out x shape :  [4, 5, 64, 41, 8, 22]
+
+        # 把channel 最后的目的是？
         x = x.permute(0, 1, 3, 4, 5, 2)
+        # out x shape :  [4, 5, 41, 8, 22, 64]
 
         return x
 
@@ -242,6 +292,14 @@ class LiftSplatShoot(nn.Module):
         return final
 
     def get_voxels(self, x, rots, trans, intrins, post_rots, post_trans):
+        '''
+        x           [4, 5, 3, 128, 352]
+        rots        [4, 5, 3, 3]
+        trans       [4, 5, 3]
+        intrins     [4, 5, 3, 3]
+        post_rots   [4, 5, 3, 3]
+        post_trans  [4, 5, 3]
+        '''
         geom = self.get_geometry(rots, trans, intrins, post_rots, post_trans)
         x = self.get_cam_feats(x)
 
@@ -250,6 +308,15 @@ class LiftSplatShoot(nn.Module):
         return x
 
     def forward(self, x, rots, trans, intrins, post_rots, post_trans):
+        '''
+        x           [4, 5, 3, 128, 352]
+        rots        [4, 5, 3, 3]
+        trans       [4, 5, 3]
+        intrins     [4, 5, 3, 3]
+        post_rots   [4, 5, 3, 3]
+        post_trans  [4, 5, 3]
+        '''
+
         x = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
         x = self.bevencode(x)
         return x

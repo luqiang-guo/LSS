@@ -16,9 +16,9 @@ from .tools import SimpleLoss, get_batch_iou, get_val_info
 
 
 def train(version,
-            dataroot='/data/nuscenes',
-            nepochs=10000,
-            gpuid=1,
+            dataroot='/home/test/dataset/nuscenes',
+            nepochs=10,
+            gpuid=5,
 
             H=900, W=1600,
             resize_lim=(0.193, 0.225),
@@ -36,11 +36,16 @@ def train(version,
             zbound=[-10.0, 10.0, 20.0],
             dbound=[4.0, 45.0, 1.0],
 
-            bsz=4,
+            bsz=1,
             nworkers=10,
             lr=1e-3,
             weight_decay=1e-7,
             ):
+    '''
+    疑问：
+        1 为什么摄像头数量是5
+    '''
+    print("__1__ -->: ", version)
     grid_conf = {
         'xbound': xbound,
         'ybound': ybound,
