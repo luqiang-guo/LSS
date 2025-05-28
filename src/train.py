@@ -18,8 +18,7 @@ from .tools import SimpleLoss, get_batch_iou, get_val_info
 def train(version,
             dataroot='/home/test/dataset/nuscenes',
             nepochs=10,
-            gpuid=5,
-
+            gpuid=1,
             H=900, W=1600,
             resize_lim=(0.193, 0.225),
             final_dim=(128, 352),
@@ -43,7 +42,7 @@ def train(version,
             ):
     '''
     疑问：
-        1 为什么摄像头数量是5
+        1 为什么摄像头数量是5 - 类似dropout
     '''
     print("__1__ -->: ", version)
     grid_conf = {
